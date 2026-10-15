@@ -3,8 +3,9 @@
 project("XenonAnalyse")
 
 add_executable(XenonAnalyse 
-    "main.cpp" 
-    "function.cpp")
+    "main.cpp"
+    "function.cpp"
+    "dataflow_switch.cpp")
 
 target_link_libraries(XenonAnalyse PRIVATE XenonUtils fmt::fmt)
 

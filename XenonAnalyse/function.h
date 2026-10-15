@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 #ifdef _DEBUG
@@ -8,6 +10,15 @@
 #else
 #define DEBUG(X)
 #endif
+
+// Known jump table at a bctr: its case labels, plus the table bytes when they sit inline in code.
+struct FunctionSwitchInfo
+{
+    std::vector<uint32_t> labels;
+    uint32_t table{};
+    uint32_t tableSize{};
+};
+using FunctionSwitchMap = std::unordered_map<uint32_t, FunctionSwitchInfo>; // keyed by bctr address
 
 struct Function
 {
@@ -47,5 +58,6 @@ struct Function
     }
     
     size_t SearchBlock(size_t address) const;
-    static Function Analyze(const void* code, size_t size, size_t base);
+    // `switches` lets the analysis follow jump table targets instead of treating bctr as a tail call.
+    static Function Analyze(const void* code, size_t size, size_t base, const FunctionSwitchMap* switches = nullptr);
 };

@@ -38,7 +38,7 @@ size_t Function::SearchBlock(size_t address) const
     return -1;
 }
 
-Function Function::Analyze(const void* code, size_t size, size_t base)
+Function Function::Analyze(const void* code, size_t size, size_t base, const FunctionSwitchMap* switches)
 {
     Function fn{ base, 0 };
 
@@ -180,6 +180,35 @@ Function Function::Analyze(const void* code, size_t size, size_t base)
                 }
                 else if (op == PPC_OP_CTR)
                 {
+                    // Known jump table: continue at every case label (and keep inline table data inside the function).
+                    if (switches != nullptr && xop == 528)
+                    {
+                        auto sw = switches->find(uint32_t(addr));
+                        if (sw != switches->end())
+                        {
+                            const auto& info = sw->second;
+                            if (info.tableSize != 0 && info.table == addr + 4 && fn.SearchBlock(info.table) == -1)
+                            {
+                                // data, never executed: a finished block covering the table
+                                auto& tableBlock = blocks.emplace_back(info.table - base, info.tableSize);
+                                tableBlock.projectedSize = info.tableSize;
+                            }
+
+                            for (uint32_t label : info.labels)
+                            {
+                                if (label < base || label >= base + size || fn.SearchBlock(label) != -1)
+                                    continue;
+
+                                blocks.emplace_back(label - base, 0);
+                                DEBUG(blocks.back().parent = blockBase);
+                                blockStack.emplace_back(blocks.size() - 1);
+                            }
+
+                            RESTORE_DATA();
+                            continue;
+                        }
+                    }
+
                     // 5th bit of BO tells cpu to ignore the counter, which is a blr/bctr otherwise it's conditional
                     const bool conditional = !(PPC_BO(instruction) & 0x10);
                     if (conditional)

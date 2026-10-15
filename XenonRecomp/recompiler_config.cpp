@@ -88,6 +88,13 @@ void RecompilerConfig::Load(const std::string_view& configFilePath)
                         switchTable.labels.push_back(*label.value<uint32_t>());
                     }
                     switchTables.emplace(*table["base"].value<uint32_t>(), std::move(switchTable));
+
+                    // Optional (emitted by the dataflow analyser): table location, so tables placed
+                    // inside code are not decoded as instructions.
+                    auto tableAddress = table["table"].value<uint32_t>();
+                    auto tableSize = table["table_size"].value<uint32_t>();
+                    if (tableAddress && tableSize && *tableSize)
+                        dataRanges.emplace(*tableAddress, *tableAddress + *tableSize);
                 }
             }
         }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <map>
+
 struct RecompilerSwitchTable
 {
     uint32_t r;
@@ -31,6 +33,8 @@ struct RecompilerConfig
     std::string outDirectoryPath;
     std::string switchTableFilePath;
     std::unordered_map<uint32_t, RecompilerSwitchTable> switchTables;
+    // Jump table data embedded in code sections (start -> end), skipped by the recompiler.
+    std::map<uint32_t, uint32_t> dataRanges;
     bool skipLr = false;
     bool ctrAsLocalVariable = false;
     bool xerAsLocalVariable = false;
@@ -54,4 +58,12 @@ struct RecompilerConfig
     std::unordered_map<uint32_t, RecompilerMidAsmHook> midAsmHooks;
 
     void Load(const std::string_view& configFilePath);
+
+    bool IsData(uint32_t address) const
+    {
+        auto it = dataRanges.upper_bound(address);
+        if (it == dataRanges.begin()) return false;
+        --it;
+        return address >= it->first && address < it->second;
+    }
 };

@@ -6,6 +6,7 @@
 #include <xbox.h>
 #include <fmt/core.h>
 #include "function.h"
+#include "dataflow_switch.h"
 
 #define SWITCH_ABSOLUTE 0
 #define SWITCH_COMPUTED 1
@@ -304,6 +305,45 @@ int main(int argc, char** argv)
     println("# ---- OFFSETED JUMPTABLE ----");
     scanPattern(offsetSwitch, std::size(offsetSwitch), SWITCH_BYTEOFFSET);
     scanPattern(wordOffsetSwitch, std::size(wordOffsetSwitch), SWITCH_SHORTOFFSET);
+
+    // Pattern-independent pass for binaries built with other compiler versions. Tables already
+    // found by the fixed patterns above are skipped.
+    println("# ---- DATAFLOW JUMPTABLE ----");
+    std::vector<uint32_t> rejected;
+    size_t dataflowCount = 0;
+    for (const auto& sw : ScanDataflowSwitches(image, &rejected))
+    {
+        bool duplicate = false;
+        for (const auto& existing : switches)
+        {
+            if (sw.bctr >= existing.base && sw.bctr <= existing.base + 0x40)
+            {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate)
+            continue;
+
+        println("[[switch]]");
+        println("base = 0x{:X}", sw.bctr);
+        println("r = {}", sw.r);
+        println("default = 0x{:X}", sw.defaultLabel);
+        println("table = 0x{:X}", sw.table);
+        println("table_size = 0x{:X}", sw.tableSize);
+        println("labels = [");
+        for (auto label : sw.labels)
+            println("    0x{:X},", label);
+        println("]");
+        println("");
+        ++dataflowCount;
+    }
+
+    for (auto addr : rejected)
+        println("# unresolved table-driven bctr at 0x{:X}", addr);
+
+    fmt::println("jump tables: {} from fixed patterns, {} from dataflow, {} table-driven bctr unresolved",
+        switches.size(), dataflowCount, rejected.size());
 
     std::ofstream f(argv[2]);
     f.write(out.data(), out.size());

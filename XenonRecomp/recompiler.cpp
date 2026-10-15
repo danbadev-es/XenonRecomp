@@ -174,6 +174,30 @@ void Recompiler::Analyse()
         image.symbols.emplace(fmt::format("sub_{:X}", address), address, size, Symbol_Function);
     }
 
+    // Jump tables keyed by their bctr, so the function analyser can follow case labels. Entries from
+    // the fixed-pattern analyser use the start of the sequence as base; the bctr follows within a few
+    // instructions.
+    FunctionSwitchMap switchMap;
+    for (const auto& [address, table] : config.switchTables)
+    {
+        const auto* code = reinterpret_cast<const uint32_t*>(image.Find(address));
+        for (uint32_t i = 0; i < 16; i++)
+        {
+            if (ByteSwap(code[i]) == 0x4E800420)
+            {
+                auto& info = switchMap[address + i * 4];
+                info.labels = table.labels;
+                auto range = config.dataRanges.find(address + i * 4 + 4);
+                if (range != config.dataRanges.end())
+                {
+                    info.table = range->first;
+                    info.tableSize = range->second - range->first;
+                }
+                break;
+            }
+        }
+    }
+
     auto& pdata = *image.Find(".pdata");
     size_t count = pdata.size / sizeof(IMAGE_CE_RUNTIME_FUNCTION);
     auto* pf = (IMAGE_CE_RUNTIME_FUNCTION*)pdata.data;
@@ -213,7 +237,7 @@ void Recompiler::Analyse()
                 if (address >= section.base && address < section.base + section.size && image.symbols.find(address) == image.symbols.end())
                 {
                     auto data = section.data + address - section.base;
-                    auto& fn = functions.emplace_back(Function::Analyze(data, section.base + section.size - address, address));
+                    auto& fn = functions.emplace_back(Function::Analyze(data, section.base + section.size - address, address, &switchMap));
                     image.symbols.emplace(fmt::format("sub_{:X}", fn.base), fn.base, fn.size, Symbol_Function);
                 }
             }
@@ -242,7 +266,7 @@ void Recompiler::Analyse()
             }
             else
             {
-                auto& fn = functions.emplace_back(Function::Analyze(data, dataEnd - data, base));
+                auto& fn = functions.emplace_back(Function::Analyze(data, dataEnd - data, base, &switchMap));
                 image.symbols.emplace(fmt::format("sub_{:X}", fn.base), fn.base, fn.size, Symbol_Function);
 
                 base += fn.size;
@@ -2293,6 +2317,9 @@ bool Recompiler::Recompile(const Function& fn)
 
     for (size_t addr = base; addr < end; addr += 4)
     {
+        if (config.IsData(uint32_t(addr)))
+            continue;
+
         const uint32_t instruction = ByteSwap(*(uint32_t*)((char*)data + addr - base));
         if (!PPC_BL(instruction))
         {
@@ -2407,6 +2434,14 @@ bool Recompiler::Recompile(const Function& fn)
 
             // Anyone could jump to this label so we wouldn't know what the CSR state would be.
             csrState = CSRState::Unknown;
+        }
+
+        if (config.IsData(uint32_t(base)))
+        {
+            println("	// jump table data: 0x{:08X}", ByteSwap(*data));
+            base += 4;
+            ++data;
+            continue;
         }
 
         if (switchTable == config.switchTables.end())
