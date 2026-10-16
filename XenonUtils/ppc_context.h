@@ -115,6 +115,34 @@
 
 typedef void PPCFunc(struct PPCContext& __restrict__ ctx, uint8_t* base);
 
+// Xenos float16 (used by vpkd3d128/vupkd3d128): like IEEE half but without inf/NaN; exponent 31 is a
+// normal exponent and packing saturates to 0x7FFF (same rules as the float16_4 pack in the recompiler).
+inline float ppcXenosHalfToFloat(uint16_t h) noexcept
+{
+    const uint32_t e = (h >> 10) & 0x1F;
+    const uint32_t m = h & 0x3FF;
+    const float magnitude = e == 0 ? ldexpf(float(m), -24) : ldexpf(float(m | 0x400), int(e) - 25);
+    return (h & 0x8000) ? -magnitude : magnitude;
+}
+
+inline uint16_t ppcXenosFloatToHalf(float f) noexcept
+{
+    uint32_t u;
+    memcpy(&u, &f, sizeof(u));
+    const uint16_t sign = uint16_t((u >> 16) & 0x8000);
+    const uint32_t a = u & 0x7FFFFFFF;
+    float magnitude;
+    memcpy(&magnitude, &a, sizeof(magnitude));
+    if (magnitude != magnitude || magnitude > 65504.0f)
+        return sign | 0x7FFF;
+    const uint32_t e = (a >> 23) & 0xFF;
+    const uint32_t m = (a & 0x7FE000) >> 13;
+    if (e > 0x70)
+        return sign | uint16_t(((e - 0x70) << 10) + m);
+    const uint32_t shift = 0x71 - e;
+    return sign | uint16_t(shift > 31 ? 0 : (0x400 + m) >> shift);
+}
+
 struct PPCFuncMapping
 {
     size_t guest;
