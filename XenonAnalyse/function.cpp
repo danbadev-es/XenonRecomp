@@ -209,8 +209,10 @@ Function Function::Analyze(const void* code, size_t size, size_t base, const Fun
                         }
                     }
 
-                    // 5th bit of BO tells cpu to ignore the counter, which is a blr/bctr otherwise it's conditional
-                    const bool conditional = !(PPC_BO(instruction) & 0x10);
+                    // BO 0x10 ignores the condition register and BO 0x04 leaves the counter alone: only with
+                    // both set is this a plain blr/bctr. bdzlr/bdnzlr (BO 0x12/0x10) depend on CTR and fall
+                    // through otherwise, so the code after them belongs to the function (e.g. memset's tail).
+                    const bool conditional = (PPC_BO(instruction) & 0x14) != 0x14;
                     if (conditional)
                     {
                         // right block's just going to return
