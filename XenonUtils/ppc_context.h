@@ -115,6 +115,13 @@
 
 typedef void PPCFunc(struct PPCContext& __restrict__ ctx, uint8_t* base);
 
+// Integer division: PowerPC leaves x/0 and INT_MIN/-1 undefined without trapping, while x86 raises
+// an exception. Return 0 (and the dividend for the overflow case) instead of crashing.
+inline int32_t ppcDivS32(int32_t a, int32_t b) noexcept { return b == 0 ? 0 : (b == -1 && a == INT32_MIN) ? a : a / b; }
+inline uint32_t ppcDivU32(uint32_t a, uint32_t b) noexcept { return b == 0 ? 0 : a / b; }
+inline int64_t ppcDivS64(int64_t a, int64_t b) noexcept { return b == 0 ? 0 : (b == -1 && a == INT64_MIN) ? a : a / b; }
+inline uint64_t ppcDivU64(uint64_t a, uint64_t b) noexcept { return b == 0 ? 0 : a / b; }
+
 // Xenos float16 (used by vpkd3d128/vupkd3d128): like IEEE half but without inf/NaN; exponent 31 is a
 // normal exponent and packing saturates to 0x7FFF (same rules as the float16_4 pack in the recompiler).
 inline float ppcXenosHalfToFloat(uint16_t h) noexcept
@@ -726,6 +733,19 @@ inline uint64_t __rdtsc()
 }
 #elif !defined(__x86_64__) && !defined(_M_X64)
 #   error "Missing implementation for __rdtsc()"
+#endif
+
+// mftb: the Xenon time base runs at 50 MHz. Games derive timing from it, so the host counter is
+// scaled instead of returning raw TSC ticks. A runtime may define PPC_QUERY_TIMEBASE to override.
+#ifndef PPC_QUERY_TIMEBASE
+#include <chrono>
+inline uint64_t ppcQueryTimebase() noexcept
+{
+    const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    return uint64_t(ns) / 20; // 50 MHz = 20 ns per tick
+}
+#define PPC_QUERY_TIMEBASE() ppcQueryTimebase()
 #endif
 
 #endif
