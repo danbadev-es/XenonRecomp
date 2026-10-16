@@ -5337,7 +5337,9 @@ powerpc_dialect(struct disassemble_info* info)
         dialect |= PPC_OPCODE_BOOKE | PPC_OPCODE_32
         | PPC_OPCODE_440 | PPC_OPCODE_ISEL | PPC_OPCODE_RFMCI;
     else
-        dialect |= (PPC_OPCODE_403 | PPC_OPCODE_601 | PPC_OPCODE_CLASSIC
+        // Xenon has no PPC403/405 instructions: with them enabled, their opcode-4 multiply-accumulate
+        // encodings shadow VMX128 ones (vsldoi128 with shift 5 decoded as mulchw.).
+        dialect |= (PPC_OPCODE_601 | PPC_OPCODE_CLASSIC
             | PPC_OPCODE_COMMON | PPC_OPCODE_ALTIVEC);
 
     if (info->disassembler_options
