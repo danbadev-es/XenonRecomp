@@ -397,12 +397,12 @@ bool Recompiler::Recompile(
         {
             if (address == config.longJmpAddress)
             {
-                println("\tlongjmp(*reinterpret_cast<jmp_buf*>(base + {}.u32), {}.s32);", r(3), r(4));
+                println("\tlongjmp(*reinterpret_cast<jmp_buf*>PPC_ADDR({}.u32), {}.s32);", r(3), r(4));
             }
             else if (address == config.setJmpAddress)
             {
                 println("\t{} = ctx;", env());
-                println("\t{}.s64 = setjmp(*reinterpret_cast<jmp_buf*>(base + {}.u32));", temp(), r(3));
+                println("\t{}.s64 = setjmp(*reinterpret_cast<jmp_buf*>PPC_ADDR({}.u32));", temp(), r(3));
                 println("\tif ({}.s64 != 0) ctx = {};", temp(), env());
                 println("\t{} = {};", r(3), temp());
             }
@@ -1089,14 +1089,14 @@ bool Recompiler::Recompile(
         break;
 
     case PPC_INST_DCBZ:
-        print("\tmemset(base + ((");
+        print("\tmemset(PPC_ADDR((");
         if (insn.operands[0] != 0)
             print("{}.u32 + ", r(insn.operands[0]));
         println("{}.u32) & ~31), 0, 32);", r(insn.operands[1]));
         break;
 
     case PPC_INST_DCBZL:
-        print("\tmemset(base + ((");
+        print("\tmemset(PPC_ADDR((");
         if (insn.operands[0] != 0)
             print("{}.u32 + ", r(insn.operands[0]));
         println("{}.u32) & ~127), 0, 128);", r(insn.operands[1]));
@@ -1319,7 +1319,7 @@ bool Recompiler::Recompile(
         break;
 
     case PPC_INST_LDARX:
-        print("\t{}.u64 = *(uint64_t*)(base + ", reserved());
+        print("\t{}.u64 = *(uint64_t*)PPC_ADDR(", reserved());
         if (insn.operands[1] != 0)
             print("{}.u32 + ", r(insn.operands[1]));
         println("{}.u32);", r(insn.operands[2]));
@@ -1416,7 +1416,7 @@ bool Recompiler::Recompile(
     case PPC_INST_LVX128:
         // NOTE: for endian swapping, we reverse the whole vector instead of individual elements.
         // this is accounted for in every instruction (eg. dp3 sums yzw instead of xyz)
-        print("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_shuffle_epi8(simde_mm_load_si128((simde__m128i*)(base + ((", v(insn.operands[0]));
+        print("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_shuffle_epi8(simde_mm_load_si128((simde__m128i*)PPC_ADDR(((", v(insn.operands[0]));
         if (insn.operands[1] != 0)
             print("{}.u32 + ", r(insn.operands[1]));
         println("{}.u32) & ~0xF))), simde_mm_load_si128((simde__m128i*)VectorMaskL)));", r(insn.operands[2]));
@@ -1428,7 +1428,7 @@ bool Recompiler::Recompile(
         if (insn.operands[1] != 0)
             print("{}.u32 + ", r(insn.operands[1]));
         println("{}.u32;", r(insn.operands[2]));
-        println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_shuffle_epi8(simde_mm_load_si128((simde__m128i*)(base + ({}.u32 & ~0xF))), simde_mm_load_si128((simde__m128i*)&VectorMaskL[({}.u32 & 0xF) * 16])));", v(insn.operands[0]), temp(), temp());
+        println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_shuffle_epi8(simde_mm_load_si128((simde__m128i*)PPC_ADDR(({}.u32 & ~0xF))), simde_mm_load_si128((simde__m128i*)&VectorMaskL[({}.u32 & 0xF) * 16])));", v(insn.operands[0]), temp(), temp());
         break;
 
     case PPC_INST_LVRX:
@@ -1437,7 +1437,7 @@ bool Recompiler::Recompile(
         if (insn.operands[1] != 0)
             print("{}.u32 + ", r(insn.operands[1]));
         println("{}.u32;", r(insn.operands[2]));
-        println("\tsimde_mm_store_si128((simde__m128i*){}.u8, {}.u32 & 0xF ? simde_mm_shuffle_epi8(simde_mm_load_si128((simde__m128i*)(base + ({}.u32 & ~0xF))), simde_mm_load_si128((simde__m128i*)&VectorMaskR[({}.u32 & 0xF) * 16])) : simde_mm_setzero_si128());", v(insn.operands[0]), temp(), temp(), temp());
+        println("\tsimde_mm_store_si128((simde__m128i*){}.u8, {}.u32 & 0xF ? simde_mm_shuffle_epi8(simde_mm_load_si128((simde__m128i*)PPC_ADDR(({}.u32 & ~0xF))), simde_mm_load_si128((simde__m128i*)&VectorMaskR[({}.u32 & 0xF) * 16])) : simde_mm_setzero_si128());", v(insn.operands[0]), temp(), temp(), temp());
         break;
 
     case PPC_INST_LVSL:
@@ -1464,7 +1464,7 @@ bool Recompiler::Recompile(
         break;
 
     case PPC_INST_LWARX:
-        print("\t{}.u32 = *(uint32_t*)(base + ", reserved());
+        print("\t{}.u32 = *(uint32_t*)PPC_ADDR(", reserved());
         if (insn.operands[1] != 0)
             print("{}.u32 + ", r(insn.operands[1]));
         println("{}.u32);", r(insn.operands[2]));
@@ -1780,7 +1780,7 @@ bool Recompiler::Recompile(
     case PPC_INST_STDCX:
         println("\t{}.lt = 0;", cr(0));
         println("\t{}.gt = 0;", cr(0));
-        print("\t{}.eq = __sync_bool_compare_and_swap(reinterpret_cast<uint64_t*>(base + ", cr(0));
+        print("\t{}.eq = __sync_bool_compare_and_swap(reinterpret_cast<uint64_t*>PPC_ADDR(", cr(0));
         if (insn.operands[1] != 0)
             print("{}.u32 + ", r(insn.operands[1]));
         println("{}.u32), {}.s64, __builtin_bswap64({}.s64));", r(insn.operands[2]), reserved(), r(insn.operands[0]));
@@ -1912,7 +1912,7 @@ bool Recompiler::Recompile(
 
     case PPC_INST_STVX:
     case PPC_INST_STVX128:
-        print("\tsimde_mm_store_si128((simde__m128i*)(base + ((");
+        print("\tsimde_mm_store_si128((simde__m128i*)PPC_ADDR(((");
         if (insn.operands[1] != 0)
             print("{}.u32 + ", r(insn.operands[1]));
         println("{}.u32) & ~0xF)), simde_mm_shuffle_epi8(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*)VectorMaskL)));", r(insn.operands[2]), v(insn.operands[0]));
@@ -1935,7 +1935,7 @@ bool Recompiler::Recompile(
     case PPC_INST_STWCX:
         println("\t{}.lt = 0;", cr(0));
         println("\t{}.gt = 0;", cr(0));
-        print("\t{}.eq = __sync_bool_compare_and_swap(reinterpret_cast<uint32_t*>(base + ", cr(0));
+        print("\t{}.eq = __sync_bool_compare_and_swap(reinterpret_cast<uint32_t*>PPC_ADDR(", cr(0));
         if (insn.operands[1] != 0)
             print("{}.u32 + ", r(insn.operands[1]));
         println("{}.u32), {}.s32, __builtin_bswap32({}.s32));", r(insn.operands[2]), reserved(), r(insn.operands[0]));
