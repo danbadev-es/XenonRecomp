@@ -1,6 +1,7 @@
 #include "xex.h"
 #include "image.h"
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 #include <unordered_map>
@@ -124,13 +125,25 @@ std::unordered_map<size_t, const char*> XboxKernelExports =
     #include "xbox/xboxkrnl_table.inc"
 };
 
-Image Xex2LoadImage(const uint8_t* data, size_t dataSize)
+// Whether a decrypted image starts with a PE header (a wrong key gives noise; with basic
+// compression nothing else would notice).
+static bool IsPeImage(const uint8_t* image, size_t size)
+{
+    if (image == nullptr || size < sizeof(IMAGE_DOS_HEADER) || image[0] != 'M' || image[1] != 'Z')
+        return false;
+
+    const uint32_t peOffset = reinterpret_cast<const IMAGE_DOS_HEADER*>(image)->e_lfanew;
+    return peOffset <= size - 4 && memcmp(image + peOffset, "PE\0\0", 4) == 0;
+}
+
+// Decrypts the image with `key` (if it is encrypted) and decompresses it. Returns null if a
+// compressed block fails its hash (a wrong key with normal compression).
+static std::unique_ptr<uint8_t[]> Xex2ExtractImage(const uint8_t* data, size_t dataSize, const uint8_t* key)
 {
     auto* header = reinterpret_cast<const Xex2Header*>(data);
     auto* security = reinterpret_cast<const Xex2SecurityInfo*>(data + header->securityOffset);
     const auto* fileFormatInfo = reinterpret_cast<const Xex2OptFileFormatInfo*>(getOptHeaderPtr(data, XEX_HEADER_FILE_FORMAT_INFO));
 
-    Image image{};
     std::unique_ptr<uint8_t[]> result{};
     size_t imageSize = security->imageSize;
 
@@ -149,7 +162,7 @@ Image Xex2LoadImage(const uint8_t* data, size_t dataSize)
 
             uint8_t decryptedKey[KeySize];
             memcpy(decryptedKey, security->aesKey, KeySize);
-            AES_init_ctx_iv(&aesContext, Xex2RetailKey, AESBlankIV);
+            AES_init_ctx_iv(&aesContext, key, AESBlankIV);
             AES_CBC_decrypt_buffer(&aesContext, decryptedKey, KeySize);
 
             decryptedData = std::make_unique<uint8_t[]>(dataSize - header->headerSize);
@@ -256,6 +269,30 @@ Image Xex2LoadImage(const uint8_t* data, size_t dataSize)
                 return {};
         }
     }
+
+    return result;
+}
+
+Image Xex2LoadImage(const uint8_t* data, size_t dataSize)
+{
+    auto* header = reinterpret_cast<const Xex2Header*>(data);
+    auto* security = reinterpret_cast<const Xex2SecurityInfo*>(data + header->securityOffset);
+    const auto* fileFormatInfo = reinterpret_cast<const Xex2OptFileFormatInfo*>(getOptHeaderPtr(data, XEX_HEADER_FILE_FORMAT_INFO));
+
+    Image image{};
+    std::unique_ptr<uint8_t[]> result = Xex2ExtractImage(data, dataSize, Xex2RetailKey);
+
+    // Executables rebuilt for development consoles are encrypted with the devkit key (all zeros).
+    if (fileFormatInfo != nullptr && fileFormatInfo->encryptionType == XEX_ENCRYPTION_NORMAL &&
+        !IsPeImage(result.get(), security->imageSize))
+    {
+        result = Xex2ExtractImage(data, dataSize, Xex2DevkitKey);
+        if (IsPeImage(result.get(), security->imageSize))
+            fprintf(stderr, "XEX image encrypted with the devkit key\n");
+    }
+
+    if (!IsPeImage(result.get(), security->imageSize))
+        return {};
 
     image.data = std::move(result);
     image.size = security->imageSize;
