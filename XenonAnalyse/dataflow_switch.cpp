@@ -65,6 +65,23 @@ namespace
         }
     }
 
+    // A call (bl, bcl, bctrl, bclrl): it returns in r3 and may change every volatile register.
+    bool IsCall(uint32_t w)
+    {
+        return (w & 1) && (Op(w) == 18 || Op(w) == 16 || (Op(w) == 19 && (XO(w) == 16 || XO(w) == 528)));
+    }
+
+    bool IsVolatile(uint32_t reg) { return reg == 0 || (reg >= 3 && reg <= 12); }
+
+    // Whether the instruction may change `reg`.
+    bool Clobbers(uint32_t w, uint32_t reg)
+    {
+        if (IsCall(w))
+            return IsVolatile(reg);
+        const int written = WrittenGpr(w);
+        return written == int(reg) || written == -2;
+    }
+
     struct Expr
     {
         enum Kind { Unknown, Const, Reg, Add, Shl, Load } kind = Unknown;
@@ -102,6 +119,15 @@ namespace
                 if (addr < limit) break;
                 uint32_t w = At(addr);
                 if (w == kNop) continue;
+                // Code before an unconditional b/blr/bctr doesn't fall through to here (it is often the
+                // end of the previous function): the value comes from elsewhere.
+                if ((Op(w) == 18 && !(w & 1)) || w == 0x4E800020 || w == kBctr)
+                    break;
+                if (IsCall(w))
+                {
+                    if (IsVolatile(reg)) return MakeUnknown();
+                    continue;
+                }
 
                 int written = WrittenGpr(w);
                 if (written == -1) continue;
@@ -268,8 +294,15 @@ std::vector<DataflowSwitch> ScanDataflowSwitches(const Image& image, std::vector
                 if (c->kind != Expr::Const)
                     continue;
                 if (off->kind == Expr::Shl) { shift = off->value; off = off->a; }
-                if (off->kind != Expr::Load || off->value == 4 || !SplitTable(off, sw.table))
+                if (off->kind != Expr::Load || off->value == 4)
                     continue;
+                if (!SplitTable(off, sw.table))
+                {
+                    // "code + loaded offset" but the table address isn't recognisable: report it rather
+                    // than leave a silent indirect call (its cases would run as separate functions).
+                    if (rejected) rejected->push_back(bctrAddr);
+                    continue;
+                }
                 caseBase = c->value;
                 entrySize = off->value;
                 sw.kind = entrySize == 1 ? 2 : 3;
@@ -300,15 +333,13 @@ std::vector<DataflowSwitch> ScanDataflowSwitches(const Image& image, std::vector
                         sw.labels.resize(UImm(w) + 1);
                         for (uint32_t a = addr + 4; a < bctrAddr; a += 4)
                         {
-                            const int wr = WrittenGpr(resolver.At(a));
-                            if (wr == int(sw.r) || wr == -2) { guarded = false; break; }
+                            if (Clobbers(resolver.At(a), sw.r)) { guarded = false; break; }
                         }
                         if (!guarded) sw.labels.clear();
                     }
                     break;
                 }
-                const int written = WrittenGpr(w);
-                if (written == int(indexReg) || written == -2) break;
+                if (Clobbers(w, indexReg)) break;
             }
 
             // Otherwise: cmplwi crN, rI, N followed by a bgt crN (or ble crN), close to the bctr.
@@ -341,8 +372,7 @@ std::vector<DataflowSwitch> ScanDataflowSwitches(const Image& image, std::vector
                     // The index register must survive until the bctr.
                     for (uint32_t a = addr + 4; a < bctrAddr; a += 4)
                     {
-                        int wr = WrittenGpr(resolver.At(a));
-                        if (wr == int(sw.r) || wr == -2) { guarded = false; break; }
+                        if (Clobbers(resolver.At(a), sw.r)) { guarded = false; break; }
                     }
                 }
             }
@@ -375,7 +405,7 @@ std::vector<DataflowSwitch> ScanDataflowSwitches(const Image& image, std::vector
                         if (a < base) continue;
                         // index must not change between its use in the address computation and the bctr
                         uint32_t w = resolver.At(a);
-                        if (Op(w) == 21 && RT(w) == sw.r) { for (uint32_t b = a + 4; b < bctrAddr; b += 4) if (WrittenGpr(resolver.At(b)) == int(sw.r)) guarded = false; break; }
+                        if (Op(w) == 21 && RT(w) == sw.r) { for (uint32_t b = a + 4; b < bctrAddr; b += 4) if (Clobbers(resolver.At(b), sw.r)) guarded = false; break; }
                     }
                     if (!guarded) sw.labels.clear();
                 }
