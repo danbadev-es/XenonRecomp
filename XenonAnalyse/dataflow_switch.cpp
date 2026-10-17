@@ -11,6 +11,7 @@ namespace
     constexpr uint32_t kNop = 0x60000000; // ori r0, r0, 0
     constexpr int kWindow = 24;           // instructions searched backwards for definitions
     constexpr int kGuardWindow = 40;      // instructions searched backwards for cmplwi/bgt
+    constexpr int kIndexGuardWindow = 256; // the same, for a cmplwi on the known index register
 
     uint32_t Op(uint32_t w) { return w >> 26; }
     uint32_t RT(uint32_t w) { return (w >> 21) & 31; }
@@ -169,6 +170,44 @@ namespace
         return false;
     }
 
+    // The register indexing the table, when the index expression is that register (possibly
+    // shifted); ~0u otherwise.
+    uint32_t IndexRegister(const ExprPtr& load)
+    {
+        const ExprPtr& index = load->a->kind == Expr::Const ? load->b : load->a;
+        if (index->kind == Expr::Shl) return index->srcReg;
+        if (index->kind == Expr::Reg) return index->value;
+        return ~0u;
+    }
+
+    // The branch to the default case after a bounds check on crN: "bgt crN, default",
+    // "ble crN, +8; b default" or "bgtlr crN" (default 0).
+    bool GuardBranch(const Resolver& resolver, uint32_t addr, uint32_t cr, uint32_t& defaultLabel)
+    {
+        const uint32_t w = resolver.At(addr);
+        const bool gtBit = (RA(w) & 3) == 1 && (RA(w) >> 2) == cr;
+        if (Op(w) == 16 && RT(w) == 12 && gtBit && (w & 3) == 0)
+        {
+            defaultLabel = addr + uint32_t(int32_t(int16_t(w & 0xFFFC)));
+            return true;
+        }
+        if (Op(w) == 19 && XO(w) == 16 && RT(w) == 12 && gtBit)
+        {
+            defaultLabel = 0;
+            return true;
+        }
+        if (Op(w) == 16 && RT(w) == 4 && gtBit && (w & 0xFFFF) == 8)
+        {
+            const uint32_t next = resolver.At(addr + 4);
+            if (Op(next) == 18 && (next & 3) == 0)
+            {
+                defaultLabel = addr + 4 + uint32_t(int32_t((next & 0x03FFFFFC) << 6) >> 6);
+                return true;
+            }
+        }
+        return false;
+    }
+
     const Section* SectionOf(const Image& image, uint32_t addr)
     {
         auto it = image.sections.upper_bound(addr);
@@ -214,11 +253,13 @@ std::vector<DataflowSwitch> ScanDataflowSwitches(const Image& image, std::vector
             uint32_t shift = 0;
             uint32_t caseBase = 0;
             uint32_t entrySize = 0;
+            uint32_t indexReg = ~0u;
 
             if (target->kind == Expr::Load && target->value == 4 && SplitTable(target, sw.table))
             {
                 sw.kind = 0;
                 entrySize = 4;
+                indexReg = IndexRegister(target);
             }
             else if (target->kind == Expr::Add)
             {
@@ -232,14 +273,45 @@ std::vector<DataflowSwitch> ScanDataflowSwitches(const Image& image, std::vector
                 caseBase = c->value;
                 entrySize = off->value;
                 sw.kind = entrySize == 1 ? 2 : 3;
+                indexReg = IndexRegister(off);
             }
             else
             {
                 continue; // vtable call or other indirect branch
             }
 
-            // Guard: cmplwi crN, rI, N followed by a bgt crN (or ble crN).
+            // Guard on the index register itself: the nearest "cmplwi crN, rIndex, N" before the
+            // bctr (after the index's last definition), followed within 8 instructions by the branch
+            // to the default case. It can be far from the bctr when cases share code in between.
             bool guarded = false;
+            for (int k = 1; indexReg != ~0u && k <= kIndexGuardWindow; k++)
+            {
+                const uint32_t addr = bctrAddr - 4 * k;
+                if (addr < base) break;
+                const uint32_t w = resolver.At(addr);
+                if (Op(w) == 10 && RA(w) == indexReg)
+                {
+                    const uint32_t cr = RT(w) >> 2;
+                    for (uint32_t b = addr + 4; b <= addr + 4 * 8 && b < bctrAddr && !guarded; b += 4)
+                        guarded = GuardBranch(resolver, b, cr, sw.defaultLabel);
+                    if (guarded)
+                    {
+                        sw.r = indexReg;
+                        sw.labels.resize(UImm(w) + 1);
+                        for (uint32_t a = addr + 4; a < bctrAddr; a += 4)
+                        {
+                            const int wr = WrittenGpr(resolver.At(a));
+                            if (wr == int(sw.r) || wr == -2) { guarded = false; break; }
+                        }
+                        if (!guarded) sw.labels.clear();
+                    }
+                    break;
+                }
+                const int written = WrittenGpr(w);
+                if (written == int(indexReg) || written == -2) break;
+            }
+
+            // Otherwise: cmplwi crN, rI, N followed by a bgt crN (or ble crN), close to the bctr.
             bool haveBranch = false;
             uint32_t guardCr = 0;
             for (int k = 1; k <= kGuardWindow && !guarded; k++)

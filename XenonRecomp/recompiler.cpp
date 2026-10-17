@@ -613,6 +613,34 @@ bool Recompiler::Recompile(
         println("\t{}.u32 = {};", r(insn.operands[2]), ea());
         break;
 
+    case PPC_INST_LFDUX:
+        printSetFlushMode(false);
+        println("\t{} = {}.u32 + {}.u32;", ea(), r(insn.operands[1]), r(insn.operands[2]));
+        println("\t{}.u64 = PPC_LOAD_U64({});", f(insn.operands[0]), ea());
+        println("\t{}.u32 = {};", r(insn.operands[1]), ea());
+        break;
+
+    case PPC_INST_STFSUX:
+        printSetFlushMode(false);
+        println("\t{}.f32 = float({}.f64);", temp(), f(insn.operands[0]));
+        println("\t{} = {}.u32 + {}.u32;", ea(), r(insn.operands[1]), r(insn.operands[2]));
+        println("\tPPC_STORE_U32({}, {}.u32);", ea(), temp());
+        println("\t{}.u32 = {};", r(insn.operands[1]), ea());
+        break;
+
+    case PPC_INST_STFDUX:
+        printSetFlushMode(false);
+        println("\t{} = {}.u32 + {}.u32;", ea(), r(insn.operands[1]), r(insn.operands[2]));
+        println("\tPPC_STORE_U64({}, {}.u64);", ea(), f(insn.operands[0]));
+        println("\t{}.u32 = {};", r(insn.operands[1]), ea());
+        break;
+
+    case PPC_INST_STDUX:
+        println("\t{} = {}.u32 + {}.u32;", ea(), r(insn.operands[1]), r(insn.operands[2]));
+        println("\tPPC_STORE_U64({}, {}.u64);", ea(), r(insn.operands[0]));
+        println("\t{}.u32 = {};", r(insn.operands[1]), ea());
+        break;
+
     case PPC_INST_STHU:
         println("\t{} = {} + {}.u32;", ea(), int32_t(insn.operands[1]), r(insn.operands[2]));
         println("\tPPC_STORE_U16({}, {}.u16);", ea(), r(insn.operands[0]));
@@ -771,6 +799,14 @@ bool Recompiler::Recompile(
             "simde_mm_min_epu32(simde_mm_load_si128((simde__m128i*){}.u32), simde_mm_set1_epi32(0xFFFF))));", v(insn.operands[0]), v(insn.operands[2]), v(insn.operands[1]));
         break;
 
+    case PPC_INST_VPKUWUM:
+    case PPC_INST_VPKUWUM128:
+        // modulo: the low halfword of each word (masked first so the saturating pack is exact)
+        println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_packus_epi32("
+            "simde_mm_and_si128(simde_mm_load_si128((simde__m128i*){}.u32), simde_mm_set1_epi32(0xFFFF)), "
+            "simde_mm_and_si128(simde_mm_load_si128((simde__m128i*){}.u32), simde_mm_set1_epi32(0xFFFF))));", v(insn.operands[0]), v(insn.operands[2]), v(insn.operands[1]));
+        break;
+
     case PPC_INST_VPKUHUS:
     case PPC_INST_VPKUHUS128:
         println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_packus_epi16("
@@ -912,18 +948,29 @@ bool Recompiler::Recompile(
         break;
 
     case PPC_INST_BDZ:
+    case PPC_INST_BDNZ:
+    {
+        // A target outside the function is a tail call (seen in a ladder of bdz used as a jump table).
+        const auto cond = fmt::format("{}.u32 {} 0", ctr(), insn.opcode->id == PPC_INST_BDZ ? "==" : "!=");
         println("\t--{}.u64;", ctr());
-        println("\tif ({}.u32 == 0) goto loc_{:X};", ctr(), insn.operands[0]);
+        if (insn.operands[0] < fn.base || insn.operands[0] >= fn.base + fn.size)
+        {
+            println("\tif ({}) {{", cond);
+            print("\t");
+            printFunctionCall(insn.operands[0]);
+            println("\t\treturn;");
+            println("\t}}");
+        }
+        else
+        {
+            println("\tif ({}) goto loc_{:X};", cond, insn.operands[0]);
+        }
         break;
+    }
 
     case PPC_INST_BDZLR:
         println("\t--{}.u64;", ctr());
         println("\tif ({}.u32 == 0) return;", ctr(), insn.operands[0]);
-        break;
-
-    case PPC_INST_BDNZ:
-        println("\t--{}.u64;", ctr());
-        println("\tif ({}.u32 != 0) goto loc_{:X};", ctr(), insn.operands[0]);
         break;
 
     case PPC_INST_BDNZF:
@@ -993,6 +1040,15 @@ bool Recompiler::Recompile(
 
     case PPC_INST_BLT:
         printConditionalBranch(false, "lt");
+        break;
+
+    // Summary overflow; after fcmpu it is the "unordered" bit (a NaN operand).
+    case PPC_INST_BSO:
+        printConditionalBranch(false, "so");
+        break;
+
+    case PPC_INST_BNS:
+        printConditionalBranch(true, "so");
         break;
 
     case PPC_INST_BLTLR:
@@ -1485,6 +1541,13 @@ bool Recompiler::Recompile(
         println("{}.u32));", r(insn.operands[2]));
         break;
 
+    case PPC_INST_LHBRX:
+        print("\t{}.u64 = __builtin_bswap16(PPC_LOAD_U16(", r(insn.operands[0]));
+        if (insn.operands[1] != 0)
+            print("{}.u32 + ", r(insn.operands[1]));
+        println("{}.u32));", r(insn.operands[2]));
+        break;
+
     case PPC_INST_LWSYNC:
         // no op
         break;
@@ -1646,6 +1709,8 @@ bool Recompiler::Recompile(
 
     case PPC_INST_RLDICL:
         println("\t{}.u64 = __builtin_rotateleft64({}.u64, {}) & 0x{:X};", r(insn.operands[0]), r(insn.operands[1]), insn.operands[2], ComputeMask(insn.operands[3], 63));
+        if (strchr(insn.opcode->name, '.'))
+            println("\t{}.compare<int64_t>({}.s64, 0, {});", cr(0), r(insn.operands[0]), xer());
         break;
 
     case PPC_INST_RLDICR:
@@ -1663,6 +1728,8 @@ bool Recompiler::Recompile(
     {
         const uint64_t mask = ComputeMask(insn.operands[3] + 32, insn.operands[4] + 32);
         println("\t{}.u64 = (__builtin_rotateleft32({}.u32, {}) & 0x{:X}) | ({}.u64 & 0x{:X});", r(insn.operands[0]), r(insn.operands[1]), insn.operands[2], mask, r(insn.operands[0]), ~mask);
+        if (strchr(insn.opcode->name, '.'))
+            println("\t{}.compare<int32_t>({}.s32, 0, {});", cr(0), r(insn.operands[0]), xer());
         break;
     }
 
@@ -2170,6 +2237,12 @@ bool Recompiler::Recompile(
         println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_cmpgt_epu16(simde_mm_load_si128((simde__m128i*){}.u16), simde_mm_load_si128((simde__m128i*){}.u16)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
         break;
 
+    case PPC_INST_VCMPGTUW:
+        println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_cmpgt_epu32(simde_mm_load_si128((simde__m128i*){}.u32), simde_mm_load_si128((simde__m128i*){}.u32)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+        if (strchr(insn.opcode->name, '.'))
+            println("\t{}.setFromMask(simde_mm_load_ps({}.f32), 0xF);", cr(6), v(insn.operands[0]));
+        break;
+
     case PPC_INST_VEXPTEFP:
     case PPC_INST_VEXPTEFP128:
         // TODO: vectorize
@@ -2201,6 +2274,14 @@ bool Recompiler::Recompile(
 
     case PPC_INST_VMAXSW:
         println("\tsimde_mm_store_si128((simde__m128i*){}.u32, simde_mm_max_epi32(simde_mm_load_si128((simde__m128i*){}.u32), simde_mm_load_si128((simde__m128i*){}.u32)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+        break;
+
+    case PPC_INST_VMAXUH:
+        println("\tsimde_mm_store_si128((simde__m128i*){}.u16, simde_mm_max_epu16(simde_mm_load_si128((simde__m128i*){}.u16), simde_mm_load_si128((simde__m128i*){}.u16)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+        break;
+
+    case PPC_INST_VMINUH:
+        println("\tsimde_mm_store_si128((simde__m128i*){}.u16, simde_mm_min_epu16(simde_mm_load_si128((simde__m128i*){}.u16), simde_mm_load_si128((simde__m128i*){}.u16)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
         break;
 
     case PPC_INST_VMINFP:
@@ -2394,6 +2475,15 @@ bool Recompiler::Recompile(
         // TODO: vectorize
         for (size_t i = 0; i < 16; i++)
             println("\t{}.u8[{}] = {}.u8[{}] << ({}.u8[{}] & 0x7);", v(insn.operands[0]), i, v(insn.operands[1]), i, v(insn.operands[2]), i);
+        break;
+
+    case PPC_INST_VSLO:
+    case PPC_INST_VSLO128:
+        // Shift left by octets: the count is bits 121-124 of vB (its last byte, host byte 0 in the
+        // reversed layout); moving toward element 0 is moving toward higher host bytes.
+        println("\t{}.u32 = ({}.u8[0] >> 3) & 0xF;", temp(), v(insn.operands[2]));
+        println("\tfor (int i = 0; i < 16; i++) {}.u8[i] = i >= int({}.u32) ? {}.u8[i - {}.u32] : 0;", vTemp(), temp(), v(insn.operands[1]), temp());
+        println("\t{} = {};", v(insn.operands[0]), vTemp());
         break;
 
     case PPC_INST_VSLDOI:

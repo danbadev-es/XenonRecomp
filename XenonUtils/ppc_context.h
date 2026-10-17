@@ -714,6 +714,12 @@ inline simde__m128i simde_mm_cmpgt_epu16(simde__m128i a, simde__m128i b)
     return simde_mm_cmpgt_epi16(simde_mm_xor_si128(a, c), simde_mm_xor_si128(b, c));
 }
 
+inline simde__m128i simde_mm_cmpgt_epu32(simde__m128i a, simde__m128i b)
+{
+    simde__m128i c = simde_mm_set1_epi32(int(0x80000000));
+    return simde_mm_cmpgt_epi32(simde_mm_xor_si128(a, c), simde_mm_xor_si128(b, c));
+}
+
 inline simde__m128i simde_mm_vctsxs(simde__m128 src1)
 {
     simde__m128 xmm2 = simde_mm_cmpunord_ps(src1, src1);
