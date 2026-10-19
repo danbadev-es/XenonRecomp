@@ -689,6 +689,12 @@ bool Recompiler::Recompile(
         println("\t{}.u32 = {};", r(insn.operands[1]), ea());
         break;
 
+    case PPC_INST_LDUX:
+        println("\t{} = {}.u32 + {}.u32;", ea(), r(insn.operands[1]), r(insn.operands[2]));
+        println("\t{}.u64 = PPC_LOAD_U64({});", r(insn.operands[0]), ea());
+        println("\t{}.u32 = {};", r(insn.operands[1]), ea());
+        break;
+
     case PPC_INST_EQV:
         println("\t{}.u64 = ~({}.u64 ^ {}.u64);", r(insn.operands[0]), r(insn.operands[1]), r(insn.operands[2]));
         if (strchr(insn.opcode->name, '.'))
@@ -755,6 +761,20 @@ bool Recompiler::Recompile(
     case PPC_INST_VSRAH:
         for (size_t i = 0; i < 8; i++)
             println("\t{}.s16[{}] = {}.s16[{}] >> ({}.u16[{}] & 0xF);", v(insn.operands[0]), i, v(insn.operands[1]), i, v(insn.operands[2]), i);
+        break;
+
+    case PPC_INST_VSRAB:
+        // Per element with the same index in both operands, so the lane order doesn't matter.
+        println("\t{} = {};", vTemp(), v(insn.operands[1]));
+        for (size_t i = 0; i < 16; i++)
+            println("\t{}.s8[{}] = {}.s8[{}] >> ({}.u8[{}] & 0x7);", v(insn.operands[0]), i, vTemp(), i, v(insn.operands[2]), i);
+        break;
+
+    case PPC_INST_VRLH:
+        println("\t{} = {};", vTemp(), v(insn.operands[1]));
+        for (size_t i = 0; i < 8; i++)
+            println("\t{0}.u16[{1}] = uint16_t(({2}.u16[{1}] << ({3}.u16[{1}] & 0xF)) | ({2}.u16[{1}] >> ((16 - ({3}.u16[{1}] & 0xF)) & 0xF)));",
+                v(insn.operands[0]), i, vTemp(), v(insn.operands[2]));
         break;
 
     case PPC_INST_VSUBSHS:
@@ -2387,7 +2407,9 @@ bool Recompiler::Recompile(
             break;
 
         case 5: // float16_4
-            if (insn.operands[3] != 2 || insn.operands[4] > 2)
+            // Packs 2 and 3 (64-bit) place the result the same way for shifts 0-2 (Xenia's
+            // InstrEmit_vpkd3d128 permute masks); Kinect Adventures uses pack 3, shift 0.
+            if ((insn.operands[3] != 2 && insn.operands[3] != 3) || insn.operands[4] > 2)
                 fmt::println("Unexpected float16_4 pack instruction at {:X}", base);
 
             for (size_t i = 0; i < 4; i++)
@@ -2565,6 +2587,14 @@ bool Recompiler::Recompile(
             println("\t{}.s64 = int64_t({}.s32[{}]) - int64_t({}.s32[{}]);", temp(), v(insn.operands[1]), i, v(insn.operands[2]), i);
             println("\t{}.s32[{}] = {}.s64 > INT_MAX ? INT_MAX : {}.s64 < INT_MIN ? INT_MIN : {}.s64;", v(insn.operands[0]), i, temp(), temp(), temp());
         }
+        break;
+
+    case PPC_INST_VSUBUBM:
+        println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_sub_epi8(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+        break;
+
+    case PPC_INST_VSUBSBS:
+        println("\tsimde_mm_store_si128((simde__m128i*){}.s8, simde_mm_subs_epi8(simde_mm_load_si128((simde__m128i*){}.s8), simde_mm_load_si128((simde__m128i*){}.s8)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
         break;
 
     case PPC_INST_VSUBUBS:
