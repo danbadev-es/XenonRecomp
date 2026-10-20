@@ -944,7 +944,29 @@ bool Recompiler::Recompile(
         break;
 
     case PPC_INST_BCTR:
-        if (switchTable != config.switchTables.end())
+        if (switchTable != config.switchTables.end() && switchTable->second.byAddress)
+        {
+            // A table of unknown length: every target it may hold that lies in this function, by
+            // address; anything else (another function) is called.
+            println("\tswitch ({}.u32) {{", ctr());
+            std::set<uint32_t> seen;
+            for (auto label : switchTable->second.labels)
+            {
+                if (label >= fn.base && label < fn.base + fn.size && seen.insert(label).second)
+                {
+                    println("\tcase 0x{:X}:", label);
+                    println("\t\tgoto loc_{:X};", label);
+                }
+            }
+            println("\tdefault:");
+            println("\t\tbreak;");
+            println("\t}}");
+            println("\tPPC_CALL_INDIRECT_FUNC({}.u32);", ctr());
+            println("\treturn;");
+
+            switchTable = config.switchTables.end();
+        }
+        else if (switchTable != config.switchTables.end())
         {
             println("\tswitch ({}.u64) {{", r(switchTable->second.r));
 

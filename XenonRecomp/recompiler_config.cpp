@@ -83,6 +83,7 @@ void RecompilerConfig::Load(const std::string_view& configFilePath)
                     auto& table = *entry.as_table();
                     RecompilerSwitchTable switchTable;
                     switchTable.r = *table["r"].value<uint32_t>();
+                    switchTable.byAddress = table["dispatch"].value_or<std::string>("") == "address";
                     for (auto& label : *table["labels"].as_array())
                     {
                         switchTable.labels.push_back(*label.value<uint32_t>());

@@ -12,6 +12,7 @@
 #include <image.h>
 #include <toml++/toml.hpp>
 #include <unordered_map>
+#include <set>
 #include <unordered_set>
 #include <xbox.h>
 #include <xxhash.h>

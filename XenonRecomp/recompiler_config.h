@@ -6,6 +6,9 @@ struct RecompilerSwitchTable
 {
     uint32_t r;
     std::vector<uint32_t> labels;
+    // dispatch = "address": labels are the possible targets (a superset) of a table whose length
+    // is unknown; the bctr is dispatched on the target address, and anything else is an indirect call.
+    bool byAddress = false;
 };
 
 struct RecompilerMidAsmHook

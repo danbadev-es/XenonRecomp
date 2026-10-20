@@ -369,15 +369,18 @@ std::vector<DataflowSwitch> ScanDataflowSwitches(const Image& image, std::vector
                     sw.labels.resize(UImm(w) + 1);
                     guarded = true;
 
-                    // The index register must survive until the bctr.
+                    // The index register must survive until the bctr. (A guard that doesn't count, e.g.
+                    // another switch's before this one, leaves no labels behind for the checks below.)
                     for (uint32_t a = addr + 4; a < bctrAddr; a += 4)
                     {
                         if (Clobbers(resolver.At(a), sw.r)) { guarded = false; break; }
                     }
+                    if (!guarded) sw.labels.clear();
                 }
             }
             // Unguarded switch (index known to be in range) with an absolute table placed right after
-            // the bctr: the table ends where the code of the lowest case label begins.
+            // the bctr: the table ends where the code of the lowest case label after it begins. Cases
+            // may also go back to code before the dispatch (a shared default, for instance).
             if (!guarded && sw.kind == 0 && sw.table == bctrAddr + 4)
             {
                 ExprPtr index = target->a->kind == Expr::Const ? target->b : target->a;
@@ -390,24 +393,59 @@ std::vector<DataflowSwitch> ScanDataflowSwitches(const Image& image, std::vector
                     for (uint32_t addr = sw.table; addr < lowest && addr < sectionEnd; addr += 4)
                     {
                         uint32_t label = resolver.At(addr);
-                        if ((label & 3) != 0 || label <= bctrAddr || label >= sectionEnd || label - bctrAddr > 0x10000)
+                        const uint32_t distance = label > bctrAddr ? label - bctrAddr : bctrAddr - label;
+                        if ((label & 3) != 0 || label == bctrAddr || label < base || label >= sectionEnd ||
+                            distance > 0x10000)
                         {
                             lowest = 0;
                             break;
                         }
-                        lowest = std::min(lowest, label);
+                        if (label > bctrAddr)
+                            lowest = std::min(lowest, label);
                         sw.labels.push_back(label);
                     }
-                    guarded = lowest != 0 && !sw.labels.empty() &&
+                    guarded = lowest != 0 && lowest != UINT32_MAX && !sw.labels.empty() &&
                         sw.table + sw.labels.size() * 4 == lowest;
-                    for (uint32_t a = mtctrAddr - 4 * kWindow; guarded && a < bctrAddr; a += 4)
+                    // The index must not change between its use in the address computation (the
+                    // nearest rlwinm of it before the mtctr) and the bctr.
+                    for (uint32_t a = mtctrAddr - 4; guarded && a >= base && a + 4 * kWindow > mtctrAddr; a -= 4)
                     {
-                        if (a < base) continue;
-                        // index must not change between its use in the address computation and the bctr
                         uint32_t w = resolver.At(a);
                         if (Op(w) == 21 && RT(w) == sw.r) { for (uint32_t b = a + 4; b < bctrAddr; b += 4) if (Clobbers(resolver.At(b), sw.r)) guarded = false; break; }
                     }
                     if (!guarded) sw.labels.clear();
+                }
+            }
+
+            // Unguarded offset table: no length, so every valid entry (aligned code near the bctr, up
+            // to 256) is a possible target, and the recompiler dispatches on the target address.
+            if (!guarded && (sw.kind == 2 || sw.kind == 3))
+            {
+                sw.labels.clear();
+                const Section* tableSection = SectionOf(image, sw.table);
+                const auto* raw = static_cast<const uint8_t*>(image.Find(sw.table));
+                if (tableSection && raw)
+                {
+                    const uint32_t available = (tableSection->base + tableSection->size - sw.table) / entrySize;
+                    uint32_t n = 0;
+                    for (; n < std::min(256u, available); n++)
+                    {
+                        const uint32_t value = entrySize == 2 ? ByteSwap(reinterpret_cast<const uint16_t*>(raw)[n]) : raw[n];
+                        const uint32_t label = caseBase + (value << shift);
+                        if ((label & 3) != 0 || label < base || label >= base + section.size || label - bctrAddr > 0x10000)
+                            break;
+                        if (std::find(sw.labels.begin(), sw.labels.end(), label) == sw.labels.end())
+                            sw.labels.push_back(label);
+                    }
+                    if (!sw.labels.empty())
+                    {
+                        sw.byAddress = true;
+                        sw.r = 0;
+                        sw.defaultLabel = 0;
+                        sw.tableSize = n * entrySize;
+                        result.push_back(std::move(sw));
+                        continue;
+                    }
                 }
             }
 

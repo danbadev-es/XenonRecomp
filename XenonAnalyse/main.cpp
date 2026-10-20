@@ -327,6 +327,8 @@ int main(int argc, char** argv)
 
         println("[[switch]]");
         println("base = 0x{:X}", sw.bctr);
+        if (sw.byAddress)
+            println("dispatch = \"address\"");
         println("r = {}", sw.r);
         println("default = 0x{:X}", sw.defaultLabel);
         println("table = 0x{:X}", sw.table);

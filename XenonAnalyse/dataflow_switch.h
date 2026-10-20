@@ -18,6 +18,8 @@
 //
 // The case count and index register come from the guarding `cmplwi crN, rI, N` + `bgt crN`.
 // Every candidate is validated (labels must be aligned and inside the containing code section).
+// An offset table without a guard (the compiler knew the index's range) has no known length: its
+// valid entries are listed as the possible targets and the recompiler dispatches on the address.
 struct DataflowSwitch
 {
     uint32_t bctr{};        // address of the bctr; used as the TOML "base"
@@ -26,6 +28,7 @@ struct DataflowSwitch
     uint32_t table{};       // address of the table data
     uint32_t tableSize{};   // bytes
     uint32_t kind{};        // 0 absolute, 2 byte offset, 3 short offset
+    bool byAddress{};       // unguarded offset table: labels are the possible targets, not indexed
     std::vector<uint32_t> labels;
 };
 
