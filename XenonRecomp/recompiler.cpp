@@ -975,7 +975,11 @@ bool Recompiler::Recompile(
         }
         else if (switchTable != config.switchTables.end())
         {
-            println("\tswitch ({}.u64) {{", r(switchTable->second.r));
+            // The index is the register's low word: the bounds check (cmplwi) and the table offset
+            // only use that, and the high word may hold anything. An rlwinm whose mask wraps around
+            // (Modern Warfare 3: rlwinm r11,r11,0,23,21 to clear one flag) copies the word into it,
+            // and a switch on the whole register then indexed the host jump table out of range.
+            println("\tswitch ({}.u32) {{", r(switchTable->second.r));
 
             for (size_t i = 0; i < switchTable->second.labels.size(); i++)
             {
