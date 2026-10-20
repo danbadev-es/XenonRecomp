@@ -784,6 +784,15 @@ bool Recompiler::Recompile(
                 v(insn.operands[0]), i, vTemp(), v(insn.operands[2]));
         break;
 
+    case PPC_INST_VRLW:
+    case PPC_INST_VRLW128:
+        // Per element with the same index in both operands, so the lane order doesn't matter.
+        println("\t{} = {};", vTemp(), v(insn.operands[1]));
+        for (size_t i = 0; i < 4; i++)
+            println("\t{0}.u32[{1}] = ({2}.u32[{1}] << ({3}.u32[{1}] & 0x1F)) | ({2}.u32[{1}] >> ((32 - ({3}.u32[{1}] & 0x1F)) & 0x1F));",
+                v(insn.operands[0]), i, vTemp(), v(insn.operands[2]));
+        break;
+
     case PPC_INST_VSUBSHS:
         println("\tsimde_mm_store_si128((simde__m128i*){}.s16, simde_mm_subs_epi16(simde_mm_load_si128((simde__m128i*){}.s16), simde_mm_load_si128((simde__m128i*){}.s16)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
         break;
