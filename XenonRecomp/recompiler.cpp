@@ -2834,6 +2834,13 @@ bool Recompiler::Recompile(
             println("\t{} = {};", v(insn.operands[0]), vTemp());
             break;
 
+        case 5: // 4 float16 (DXGI R16G16B16A16_FLOAT) in the last two words (host u16[0-3])
+            // As Xenia's PACK_TYPE_FLOAT16_4: element i is halfword 4 + i.
+            for (size_t i = 0; i < 4; i++)
+                println("\t{}.f32[{}] = ppcXenosHalfToFloat({}.u16[{}]);", vTemp(), 3 - i, v(insn.operands[1]), 3 - i);
+            println("\t{} = {};", v(insn.operands[0]), vTemp());
+            break;
+
         default:
             println("\t__builtin_debugtrap();");
             break;
