@@ -2541,6 +2541,25 @@ bool Recompiler::Recompile(
             }
             break;
 
+        case 2: // normpacked32 (2:10:10:10): x in bits 0-9, y 10-19, z 20-29 (signed), w 30-31
+            // As Xenia's PACK_TYPE_UINT_2101010: each element is 3.0 (w: 3.0 too) plus the value in its
+            // low mantissa bits, saturated as a float, then its low bits are kept. Guest element i is
+            // host f32[3 - i]; pack 1 (32 bits) places the result like the D3D color.
+            if (insn.operands[3] != 1)
+                fmt::println("Unexpected normpacked32 pack instruction at {:X}", base);
+            for (size_t i = 0; i < 4; i++)
+            {
+                const char* low = i < 3 ? "0x403FFE01" : "0x40400000";
+                const char* high = i < 3 ? "0x404001FF" : "0x40400003";
+                println("\t{}.u32[{}] = {};", vTemp(), 0, low);
+                println("\t{}.u32[{}] = {};", vTemp(), 1, high);
+                println("\t{}.f32[2] = {}.f32[{}] > {}.f32[0] ? {}.f32[{}] : {}.f32[0];", vTemp(), v(insn.operands[1]), 3 - i, vTemp(), v(insn.operands[1]), 3 - i, vTemp());
+                println("\t{}.f32[2] = {}.f32[2] < {}.f32[1] ? {}.f32[2] : {}.f32[1];", vTemp(), vTemp(), vTemp(), vTemp(), vTemp());
+                println("\t{}.u32 {}= ({}.u32[2] & {}) << {};", temp(), i == 0 ? "" : "|", vTemp(), i < 3 ? "0x3FF" : "0x3", i * 10);
+            }
+            println("\t{}.u32[{}] = {}.u32;", v(insn.operands[0]), insn.operands[4], temp());
+            break;
+
         case 3: // float16_2: x (host f32[3]) in the high half, y (host f32[2]) in the low half
             if (insn.operands[3] != 1)
                 fmt::println("Unexpected float16_2 pack instruction at {:X}", base);
@@ -2768,6 +2787,19 @@ bool Recompiler::Recompile(
             }
             println("\t{}.f32[1] = 0.0f;", vTemp());
             println("\t{}.f32[0] = 1.0f;", vTemp());
+            println("\t{} = {};", v(insn.operands[0]), vTemp());
+            break;
+
+        case 2: // normpacked32 (2:10:10:10) in the last element (host u32[0])
+            // As Xenia's PACK_TYPE_UINT_2101010: x (bits 0-9), y and z are sign-extended and added to
+            // 3.0's bits, w (bits 30-31) to 1.0's; -512 in x, y or z gives a quiet NaN.
+            println("\t{}.u32 = {}.u32[0];", temp(), v(insn.operands[1]));
+            for (size_t i = 0; i < 3; i++)
+            {
+                println("\t{}.u32[{}] = 0x40400000 + uint32_t(int32_t({}.u32 << {}) >> 22);", vTemp(), 3 - i, temp(), 22 - i * 10);
+                println("\tif ({0}.u32[{1}] == 0x403FFE00) {0}.u32[{1}] = 0x7FC00000;", vTemp(), 3 - i);
+            }
+            println("\t{}.u32[0] = 0x3F800000 + ({}.u32 >> 30);", vTemp(), temp());
             println("\t{} = {};", v(insn.operands[0]), vTemp());
             break;
 
