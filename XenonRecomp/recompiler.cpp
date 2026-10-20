@@ -770,6 +770,13 @@ bool Recompiler::Recompile(
             println("\t{}.s8[{}] = {}.s8[{}] >> ({}.u8[{}] & 0x7);", v(insn.operands[0]), i, vTemp(), i, v(insn.operands[2]), i);
         break;
 
+    case PPC_INST_VSRB:
+        // Per element with the same index in both operands, so the lane order doesn't matter.
+        println("\t{} = {};", vTemp(), v(insn.operands[1]));
+        for (size_t i = 0; i < 16; i++)
+            println("\t{}.u8[{}] = {}.u8[{}] >> ({}.u8[{}] & 0x7);", v(insn.operands[0]), i, vTemp(), i, v(insn.operands[2]), i);
+        break;
+
     case PPC_INST_VRLH:
         println("\t{} = {};", vTemp(), v(insn.operands[1]));
         for (size_t i = 0; i < 8; i++)
@@ -2010,6 +2017,15 @@ bool Recompiler::Recompile(
         println("{}.u32, {}.u16);", r(insn.operands[2]), r(insn.operands[0]));
         break;
 
+    case PPC_INST_STVEBX:
+        // NOTE: accounting for the full vector reversal here
+        print("\t{} = ", ea());
+        if (insn.operands[1] != 0)
+            print("{}.u32 + ", r(insn.operands[1]));
+        println("{}.u32;", r(insn.operands[2]));
+        println("\tPPC_STORE_U8(ea, {}.u8[15 - ({} & 0xF)]);", v(insn.operands[0]), ea());
+        break;
+
     case PPC_INST_STVEHX:
         // TODO: vectorize
         // NOTE: accounting for the full vector reversal here
@@ -2184,6 +2200,10 @@ bool Recompiler::Recompile(
         println("\tsimde_mm_store_si128((simde__m128i*){}.u16, simde_mm_add_epi16(simde_mm_load_si128((simde__m128i*){}.u16), simde_mm_load_si128((simde__m128i*){}.u16)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
         break;
 
+    case PPC_INST_VADDUHS:
+        println("\tsimde_mm_store_si128((simde__m128i*){}.u16, simde_mm_adds_epu16(simde_mm_load_si128((simde__m128i*){}.u16), simde_mm_load_si128((simde__m128i*){}.u16)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+        break;
+
     case PPC_INST_VADDUWM:
         println("\tsimde_mm_store_si128((simde__m128i*){}.u32, simde_mm_add_epi32(simde_mm_load_si128((simde__m128i*){}.u32), simde_mm_load_si128((simde__m128i*){}.u32)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
         break;
@@ -2197,6 +2217,7 @@ bool Recompiler::Recompile(
         println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_and_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
         break;
 
+    case PPC_INST_VANDC:
     case PPC_INST_VANDC128:
         println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_andnot_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[2]), v(insn.operands[1]));
         break;
@@ -2207,6 +2228,12 @@ bool Recompiler::Recompile(
 
     case PPC_INST_VAVGSH:
         println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_avg_epi16(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+        break;
+
+    case PPC_INST_VAVGSW:
+        // (a + b + 1) >> 1 without overflow; per element with the same index, so lane order doesn't matter.
+        for (size_t i = 0; i < 4; i++)
+            println("\t{}.s32[{}] = int32_t((int64_t({}.s32[{}]) + int64_t({}.s32[{}]) + 1) >> 1);", v(insn.operands[0]), i, v(insn.operands[1]), i, v(insn.operands[2]), i);
         break;
 
     case PPC_INST_VAVGUB:
@@ -2374,6 +2401,10 @@ bool Recompiler::Recompile(
 
     case PPC_INST_VMINSH:
         println("\tsimde_mm_store_si128((simde__m128i*){}.s16, simde_mm_min_epi16(simde_mm_load_si128((simde__m128i*){}.s16), simde_mm_load_si128((simde__m128i*){}.s16)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+        break;
+
+    case PPC_INST_VMINSW:
+        println("\tsimde_mm_store_si128((simde__m128i*){}.s32, simde_mm_min_epi32(simde_mm_load_si128((simde__m128i*){}.s32), simde_mm_load_si128((simde__m128i*){}.s32)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
         break;
 
     case PPC_INST_VMAXUH:
@@ -2573,6 +2604,16 @@ bool Recompiler::Recompile(
         println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_or_si128(simde_mm_andnot_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)), simde_mm_and_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8))));", v(insn.operands[0]), v(insn.operands[3]), v(insn.operands[1]), v(insn.operands[3]), v(insn.operands[2]));
         break;
 
+    case PPC_INST_VSL:
+        // Shift the whole register left by bits: the count is bits 125-127 of vB (its last byte, host
+        // byte 0). In the reversed layout the host's little-endian 128-bit value is the guest's
+        // big-endian one, so it is a 128-bit left shift of the two host halves.
+        println("\t{}.u32 = {}.u8[0] & 0x7;", temp(), v(insn.operands[2]));
+        println("\t{}.u64[1] = ({}.u64[1] << {}.u32) | ({}.u32 ? {}.u64[0] >> (64 - {}.u32) : 0);", vTemp(), v(insn.operands[1]), temp(), temp(), v(insn.operands[1]), temp());
+        println("\t{}.u64[0] = {}.u64[0] << {}.u32;", vTemp(), v(insn.operands[1]), temp());
+        println("\t{} = {};", v(insn.operands[0]), vTemp());
+        break;
+
     case PPC_INST_VSLB:
         // TODO: vectorize
         for (size_t i = 0; i < 16; i++)
@@ -2585,6 +2626,15 @@ bool Recompiler::Recompile(
         // reversed layout); moving toward element 0 is moving toward higher host bytes.
         println("\t{}.u32 = ({}.u8[0] >> 3) & 0xF;", temp(), v(insn.operands[2]));
         println("\tfor (int i = 0; i < 16; i++) {}.u8[i] = i >= int({}.u32) ? {}.u8[i - {}.u32] : 0;", vTemp(), temp(), v(insn.operands[1]), temp());
+        println("\t{} = {};", v(insn.operands[0]), vTemp());
+        break;
+
+    case PPC_INST_VSRO:
+    case PPC_INST_VSRO128:
+        // Shift right by octets: the count is bits 121-124 of vB (host byte 0); moving toward the last
+        // element is moving toward lower host bytes.
+        println("\t{}.u32 = ({}.u8[0] >> 3) & 0xF;", temp(), v(insn.operands[2]));
+        println("\tfor (int i = 0; i < 16; i++) {}.u8[i] = i + int({}.u32) < 16 ? {}.u8[i + {}.u32] : 0;", vTemp(), temp(), v(insn.operands[1]), temp());
         println("\t{} = {};", v(insn.operands[0]), vTemp());
         break;
 
@@ -2683,6 +2733,16 @@ bool Recompiler::Recompile(
 
     case PPC_INST_VSUBUHM:
         println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_sub_epi16(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+        break;
+
+    case PPC_INST_VSUBUWM:
+        println("\tsimde_mm_store_si128((simde__m128i*){}.u32, simde_mm_sub_epi32(simde_mm_load_si128((simde__m128i*){}.u32), simde_mm_load_si128((simde__m128i*){}.u32)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+        break;
+
+    case PPC_INST_VSUBUWS:
+        // Unsigned saturating: a - min(a, b).
+        println("\t{} = {};", vTemp(), v(insn.operands[1]));
+        println("\tsimde_mm_store_si128((simde__m128i*){}.u32, simde_mm_sub_epi32(simde_mm_load_si128((simde__m128i*){}.u32), simde_mm_min_epu32(simde_mm_load_si128((simde__m128i*){}.u32), simde_mm_load_si128((simde__m128i*){}.u32))));", v(insn.operands[0]), vTemp(), vTemp(), v(insn.operands[2]));
         break;
 
     case PPC_INST_VUPKD3D128:
