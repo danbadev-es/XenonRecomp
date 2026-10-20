@@ -389,6 +389,7 @@ std::vector<DataflowSwitch> ScanDataflowSwitches(const Image& image, std::vector
                     sw.r = index->srcReg;
                     sw.defaultLabel = 0;
                     uint32_t lowest = UINT32_MAX;
+                    bool endsInCode = false;  // a word that is no label came before the lowest label
                     const uint32_t sectionEnd = base + section.size;
                     for (uint32_t addr = sw.table; addr < lowest && addr < sectionEnd; addr += 4)
                     {
@@ -397,15 +398,34 @@ std::vector<DataflowSwitch> ScanDataflowSwitches(const Image& image, std::vector
                         if ((label & 3) != 0 || label == bctrAddr || label < base || label >= sectionEnd ||
                             distance > 0x10000)
                         {
-                            lowest = 0;
+                            endsInCode = true;
                             break;
                         }
                         if (label > bctrAddr)
                             lowest = std::min(lowest, label);
                         sw.labels.push_back(label);
                     }
-                    guarded = lowest != 0 && lowest != UINT32_MAX && !sw.labels.empty() &&
+                    guarded = !endsInCode && lowest != UINT32_MAX && !sw.labels.empty() &&
                         sw.table + sw.labels.size() * 4 == lowest;
+                    // The table may instead end where code that is no case of it begins (reached from
+                    // elsewhere). Then its length must be that of a bounds check on the same register
+                    // earlier on: an enclosing switch on the same index dispatched to this one.
+                    if (!guarded && endsInCode && !sw.labels.empty())
+                    {
+                        for (int k = 1; k <= kIndexGuardWindow; k++)
+                        {
+                            const uint32_t addr = bctrAddr - 4 * k;
+                            if (addr < base) break;
+                            const uint32_t w = resolver.At(addr);
+                            if (Op(w) != 10 || RA(w) != sw.r) continue;
+                            uint32_t ignored = 0;
+                            bool checked = false;
+                            for (uint32_t b = addr + 4; b <= addr + 4 * 8 && b < bctrAddr && !checked; b += 4)
+                                checked = GuardBranch(resolver, b, RT(w) >> 2, ignored);
+                            guarded = checked && UImm(w) + 1 == sw.labels.size();
+                            break;
+                        }
+                    }
                     // The index must not change between its use in the address computation (the
                     // nearest rlwinm of it before the mtctr) and the bctr.
                     for (uint32_t a = mtctrAddr - 4; guarded && a >= base && a + 4 * kWindow > mtctrAddr; a -= 4)
