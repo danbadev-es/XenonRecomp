@@ -2580,6 +2580,24 @@ bool Recompiler::Recompile(
             println("\t{}.u32[{}] = {}.u32;", v(insn.operands[0]), insn.operands[4], temp());
             break;
 
+        case 4: // normshort4: as Xenia's PACK_TYPE_SHORT_4, each element saturated to 3.0 +- 32767 *
+                // 2^-22 (a NaN gives the minimum) and its low 16 bits kept; placed like float16_4
+            if ((insn.operands[3] != 2 && insn.operands[3] != 3) || insn.operands[4] > 2)
+                fmt::println("Unexpected normshort4 pack instruction at {:X}", base);
+            // The four results are gathered in temp first: the destination may be the source.
+            println("\t{}.u32[0] = 0x403F8001;", vTemp());
+            println("\t{}.u32[1] = 0x40407FFF;", vTemp());
+            println("\t{}.u64 = 0;", temp());
+            for (size_t i = 0; i < 4; i++)
+            {
+                println("\t{}.f32[2] = {}.f32[{}] > {}.f32[0] ? {}.f32[{}] : {}.f32[0];", vTemp(), v(insn.operands[1]), i, vTemp(), v(insn.operands[1]), i, vTemp());
+                println("\t{}.f32[2] = {}.f32[2] < {}.f32[1] ? {}.f32[2] : {}.f32[1];", vTemp(), vTemp(), vTemp(), vTemp(), vTemp());
+                println("\t{}.u64 |= uint64_t({}.u32[2] & 0xFFFF) << {};", temp(), vTemp(), i * 16);
+            }
+            for (size_t i = 0; i < 4; i++)
+                println("\t{}.u16[{}] = uint16_t({}.u64 >> {});", v(insn.operands[0]), i + 2 * insn.operands[4], temp(), i * 16);
+            break;
+
         default:
             println("\t__builtin_debugtrap();");
             break;
@@ -2827,6 +2845,23 @@ bool Recompiler::Recompile(
                 println("\t{}.f32[{}] = ppcXenosHalfToFloat({}.u16[{}]);", vTemp(), 3 - i, v(insn.operands[1]), 1 - i);
             println("\t{}.f32[1] = 0.0f;", vTemp());
             println("\t{}.f32[0] = 1.0f;", vTemp());
+            println("\t{} = {};", v(insn.operands[0]), vTemp());
+            break;
+
+        case 4: // 4 shorts in the last two elements (x, y, z, w = guest halfwords 4-7, host u16[3-0]),
+                // each added to 3.0's bits; -32768 gives a quiet NaN (as Xenia's PACK_TYPE_SHORT_4)
+            for (size_t i = 0; i < 4; i++)
+            {
+                println("\t{}.u32[{}] = 0x40400000 + uint32_t(int32_t({}.s16[{}]));", vTemp(), i, v(insn.operands[1]), i);
+                println("\tif ({0}.u32[{1}] == 0x403F8000) {0}.u32[{1}] = 0x7FC00000;", vTemp(), i);
+            }
+            println("\t{} = {};", v(insn.operands[0]), vTemp());
+            break;
+
+        case 5: // 4 float16 in the last two elements (x, y, z, w = guest halfwords 4-7, host u16[3-0]),
+                // as Xenia's PACK_TYPE_FLOAT16_4: guest element k is host f32[3 - k]
+            for (size_t i = 0; i < 4; i++)
+                println("\t{}.f32[{}] = ppcXenosHalfToFloat({}.u16[{}]);", vTemp(), i, v(insn.operands[1]), i);
             println("\t{} = {};", v(insn.operands[0]), vTemp());
             break;
 
