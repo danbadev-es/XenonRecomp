@@ -311,17 +311,23 @@ XexPatcher::Result XexPatcher::apply(const uint8_t* xexBytes, size_t xexBytesSiz
     outBytes.resize(headerTargetSize);
     newXexHeader = (Xex2Header *)(outBytes.data());
 
-    // Copy the rest of the data.
+    // Copy the rest of the data. The image is patched in place, so the buffer holds the larger of
+    // the base and the target images (as Xenia allocates the larger of the two): a target smaller
+    // than the base (Fruit Ninja Kinect's update) still needs room for the whole base image, which
+    // the patch may read from anywhere. It is cut to the target size at the end.
+    const Xex2SecurityInfo *originalSecurityInfo = (const Xex2SecurityInfo *)(&xexBytes[xexHeader->securityOffset]);
     const Xex2SecurityInfo *newSecurityInfo = (const Xex2SecurityInfo *)(&outBytes[newXexHeader->securityOffset]);
-    outBytes.resize(outBytes.size() + newSecurityInfo->imageSize);
+    const uint32_t targetImageSize = newSecurityInfo->imageSize;
+    const size_t baseDataSize = xexBytesSize - xexHeader->headerSize;
+    const size_t workImageSize = std::max<size_t>(std::max<uint32_t>(targetImageSize, originalSecurityInfo->imageSize), baseDataSize);
+    outBytes.resize(outBytes.size() + workImageSize);
     memset(&outBytes[headerTargetSize], 0, outBytes.size() - headerTargetSize);
-    memcpy(&outBytes[headerTargetSize], &xexBytes[xexHeader->headerSize], xexBytesSize - xexHeader->headerSize);
+    memcpy(&outBytes[headerTargetSize], &xexBytes[xexHeader->headerSize], baseDataSize);
     newXexHeader = (Xex2Header *)(outBytes.data());
     newSecurityInfo = (const Xex2SecurityInfo *)(&outBytes[newXexHeader->securityOffset]);
-    
+
     // Decrypt the keys and validate that the patch is compatible with the base file.
     constexpr uint32_t KeySize = 16;
-    const Xex2SecurityInfo *originalSecurityInfo = (const Xex2SecurityInfo *)(&xexBytes[xexHeader->securityOffset]);
     const Xex2SecurityInfo *patchSecurityInfo = (const Xex2SecurityInfo *)(&patchBytes[patchHeader->securityOffset]);
     uint8_t decryptedOriginalKey[KeySize];
     uint8_t decryptedNewKey[KeySize];
@@ -536,6 +542,13 @@ XexPatcher::Result XexPatcher::apply(const uint8_t* xexBytes, size_t xexBytesSiz
 
         patchDataCursor += blockDataSize;
         currentBlock = nextBlock;
+    }
+
+    // The target image's size: past it is only what was left of a larger base image.
+    const size_t patchedSize = size_t(newXexHeader->headerSize) + targetImageSize;
+    if (outBytes.size() > patchedSize)
+    {
+        outBytes.resize(patchedSize);
     }
 
     return Result::Success;
