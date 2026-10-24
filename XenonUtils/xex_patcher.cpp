@@ -450,9 +450,17 @@ XexPatcher::Result XexPatcher::apply(const uint8_t* xexBytes, size_t xexBytesSiz
             blocks = nextBlock;
         }
 
+        // The image goes right after the patched headers, where the basic branch puts it and the
+        // patch expects it (newXexHeaderSize is larger when the base's headers are, and the
+        // image would land past its place and the end of the buffer).
         int resultCode = 0;
         uint32_t uncompressedSize = originalSecurityInfo->imageSize;
-        uint8_t* buffer = outBytes.data() + newXexHeaderSize;
+        if (outBytes.size() < (headerTargetSize + uncompressedSize))
+        {
+            return Result::XexFileInvalid;
+        }
+
+        uint8_t* buffer = outBytes.data() + headerTargetSize;
 
         resultCode = lzxDecompress(compressBuffer.get(), d - compressBuffer.get(), buffer, uncompressedSize, ((const Xex2FileNormalCompressionInfo*)(fileFormatInfo + 1))->windowSize, nullptr, 0);
 
