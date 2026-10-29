@@ -37,7 +37,8 @@ int main(int argc, char* argv[])
         {
             for (auto& symbol : recompiler.image.symbols)
             {
-                if (symbol.name.rfind("sub_", 0) != 0)
+                // Not the imports (__imp__<export>), which the runtime implements once for all.
+                if (symbol.name.rfind("sub_", 0) != 0 && symbol.name.rfind("__imp__", 0) != 0)
                     symbol.name = recompiler.config.symbolPrefix + symbol.name;
             }
         }
