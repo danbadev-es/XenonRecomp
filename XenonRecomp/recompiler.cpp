@@ -3286,7 +3286,7 @@ void Recompiler::Recompile(const std::filesystem::path& headerFilePath)
     {
         println("#include \"ppc_recomp_shared.h\"\n");
 
-        println("PPCFuncMapping PPCFuncMappings[] = {{");
+        println("PPCFuncMapping {}PPCFuncMappings[] = {{", config.symbolPrefix);
         for (auto& symbol : image.symbols)
             println("\t{{ 0x{:X}, {} }},", symbol.address, symbol.name);
 

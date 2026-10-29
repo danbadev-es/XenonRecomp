@@ -37,6 +37,7 @@ void RecompilerConfig::Load(const std::string_view& configFilePath)
         saveVmx64Address = main["savevmx_64_address"].value_or(0u);
         longJmpAddress = main["longjmp_address"].value_or(0u);
         setJmpAddress = main["setjmp_address"].value_or(0u);
+        symbolPrefix = main["symbol_prefix"].value_or<std::string>("");
 
         if (restGpr14Address == 0) fmt::println("ERROR: __restgprlr_14 address is unspecified");
         if (saveGpr14Address == 0) fmt::println("ERROR: __savegprlr_14 address is unspecified");

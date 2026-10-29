@@ -56,6 +56,10 @@ struct RecompilerConfig
     uint32_t saveVmx64Address = 0;
     uint32_t longJmpAddress = 0;
     uint32_t setJmpAddress = 0;
+    // Prepended to every symbol that isn't named after its address (the entry point _xstart, the
+    // register save/restore helpers) and to PPCFuncMappings, so that a title DLL recompiled with a
+    // prefix links into the same executable as its title.
+    std::string symbolPrefix;
     std::unordered_map<uint32_t, uint32_t> functions;
     std::unordered_map<uint32_t, uint32_t> invalidInstructions;
     std::unordered_map<uint32_t, RecompilerMidAsmHook> midAsmHooks;
