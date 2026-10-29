@@ -1569,6 +1569,9 @@ bool Recompiler::Recompile(
     case PPC_INST_LVEWX128:
     case PPC_INST_LVX:
     case PPC_INST_LVX128:
+    // lvxl: lvx that marks the cache line least recently used, a hint with no effect here.
+    case PPC_INST_LVXL:
+    case PPC_INST_LVXL128:
         // NOTE: for endian swapping, we reverse the whole vector instead of individual elements.
         // this is accounted for in every instruction (eg. dp3 sums yzw instead of xyz)
         print("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_shuffle_epi8(simde_mm_load_si128((simde__m128i*)PPC_ADDR(((", v(insn.operands[0]));
@@ -2067,6 +2070,9 @@ bool Recompiler::Recompile(
 
     case PPC_INST_STVLX:
     case PPC_INST_STVLX128:
+    // stvlxl: stvlx with the least-recently-used hint, which has no effect here.
+    case PPC_INST_STVLXL:
+    case PPC_INST_STVLXL128:
         // TODO: vectorize
         // NOTE: accounting for the full vector reversal here
         print("\t{} = ", ea());
